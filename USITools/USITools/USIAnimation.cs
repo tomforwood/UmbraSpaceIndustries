@@ -1,42 +1,57 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Runtime.Remoting.Messaging;
-using System.Security.AccessControl;
+using System.Text;
 using UnityEngine;
 
 namespace USITools
 {
-    public class USIAnimation : PartModule
+    public class USIAnimation : PartModule, IMultipleDragCube
     {
-        [KSPField] 
-        public int CrewCapacity = 0;
+        private List<IAnimatedModule> _Modules;
+        private List<ModuleSwappableConverter> _SwapBays;
+        private bool _hasBeenInitialized = false;
+
+        private void FindModules()
+        {
+            if (vessel != null)
+            {
+                _Modules = part.FindModulesImplementing<IAnimatedModule>();
+                _SwapBays = part.FindModulesImplementing<ModuleSwappableConverter>();
+            }
+        }
 
         [KSPField]
-        public string deployAnimationName = "Deploy";
+        public string startEventGUIName = "";
 
         [KSPField]
-        public string secondaryAnimationName = "";
-
-        [KSPField(isPersistant = true)]
-        public bool isDeployed = false;
-
-        [KSPField(isPersistant = true)]
-        public float inflatedCost = 0;
+        public string endEventGUIName = "";
 
         [KSPField]
-        public bool inflatable = false;
+        public string actionGUIName = "";
 
-        [KSPField]
-        public int PrimaryLayer = 2;
+        [KSPField] public int CrewCapacity = 0;
 
-        [KSPField]
-        public int SecondaryLayer = 3;
+        [KSPField] public string deployAnimationName = "Deploy";
 
-        [KSPField] 
-        public float inflatedMultiplier = -1;
+        [KSPField] public string secondaryAnimationName = "";
 
-        [KSPField]
-        public bool shedOnInflate = false;
+        [KSPField(isPersistant = true)] public bool isDeployed = false;
+
+        [KSPField(isPersistant = true)] public float inflatedCost = 0;
+
+        [KSPField] public bool inflatable = false;
+
+        [KSPField] public int PrimaryLayer = 2;
+
+        [KSPField] public int SecondaryLayer = 3;
+
+        [KSPField] public float inflatedMultiplier = -1;
+
+        [KSPField] public bool shedOnInflate = false;
+
+        [KSPField] public string ResourceCosts = "";
+
+        [KSPField] public string ReplacementResource = "Construction";
 
         [KSPAction("Deploy Module")]
         public void DeployAction(KSPActionParam param)
@@ -53,7 +68,7 @@ namespace USITools
 
 
         [KSPAction("Toggle Module")]
-        public void ToggleScoopAction(KSPActionParam param)
+        public void ToggleAction(KSPActionParam param)
         {
             if (isDeployed)
             {
@@ -67,9 +82,23 @@ namespace USITools
 
         public Animation DeployAnimation
         {
-            get
+            get { return part.FindModelAnimators(deployAnimationName)[0]; }
+        }
+
+        public override void OnStart(StartState state)
+        {
+            Initialize();
+        }
+
+        public override void OnLoad(ConfigNode node)
+        {
+            try
             {
-                return part.FindModelAnimators(deployAnimationName)[0];
+                CheckAnimationState();
+            }
+            catch (Exception ex)
+            {
+                print("ERROR IN USIAnimationOnLoad - " + ex.Message);
             }
         }
 
@@ -79,7 +108,7 @@ namespace USITools
             {
                 try
                 {
-                    return part.FindModelAnimators(secondaryAnimationName)[0]; 
+                    return part.FindModelAnimators(secondaryAnimationName)[0];
                 }
                 catch (Exception)
                 {
@@ -89,11 +118,15 @@ namespace USITools
             }
         }
 
-        [KSPEvent(guiName = "Deploy", guiActive = true, externalToEVAOnly = true, guiActiveEditor = true, active = true, guiActiveUnfocused = true, unfocusedRange = 3.0f)]
+        [KSPEvent(guiName = "Deploy", guiActive = true, externalToEVAOnly = true, guiActiveEditor = true, active = true,
+            guiActiveUnfocused = true, unfocusedRange = 3.0f)]
         public void DeployModule()
         {
             if (!isDeployed)
             {
+                if (!CheckResources())
+                    return;
+
                 if (CheckDeployConditions())
                 {
                     PlayDeployAnimation();
@@ -101,6 +134,8 @@ namespace USITools
                     ToggleEvent("RetractModule", true);
                     CheckDeployConditions();
                     isDeployed = true;
+                    EnableModules();
+                    SetControlSurface(true);
                 }
             }
         }
@@ -127,11 +162,17 @@ namespace USITools
                 if (CrewCapacity > 0)
                 {
                     part.CrewCapacity = CrewCapacity;
-                    if (CrewCapacity > 0 & !part.Modules.Contains("TransferDialogSpawner"))
-                        part.AddModule("TransferDialogSpawner");
+                    if (CrewCapacity > 0)
+                    {
+                        part.CheckTransferDialog();
+                        MonoUtilities.RefreshContextWindows(part);
+                    }
                 }
-                foreach (var m in part.FindModulesImplementing<ModuleResourceConverter>())
+                var mods = part.FindModulesImplementing<ModuleResourceConverter>();
+                var count = mods.Count;
+                for (int i = 0; i < count; ++i)
                 {
+                    var m = mods[i];
                     m.EnableModule();
                 }
                 MonoUtilities.RefreshContextWindows(part);
@@ -139,17 +180,146 @@ namespace USITools
             return true;
         }
 
-        [KSPEvent(guiName = "Retract", guiActive = true, externalToEVAOnly = true, guiActiveEditor = false, active = true, guiActiveUnfocused = true, unfocusedRange = 3.0f)]
+        private bool CheckResources()
+        {
+            var res = part.Resources[ReplacementResource];
+            if (HighLogic.LoadedSceneIsEditor)
+            {
+                if (res != null)
+                    res.amount = res.maxAmount;
+                return true;
+            }
+
+            var allResources = true;
+            var missingResources = "";
+            //Check that we have everything we need.
+            var count = ResCosts.Count;
+            for(int i = 0; i < count; ++i)
+            {
+                var r = ResCosts[i];
+                if (!HasResource(r))
+                {
+                    allResources = false;
+                    missingResources += "\n" + r.Ratio + " " + r.ResourceName;
+                }
+            }
+            if (!allResources)
+            {
+                ScreenMessages.PostScreenMessage("Missing resources to assemble module:" + missingResources, 5f,
+                    ScreenMessageStyle.UPPER_CENTER);
+                return false;
+            }
+            //Since everything is here...
+            count = ResCosts.Count;
+            for (int i = 0; i < count; ++i)
+            {
+                var r = ResCosts[i];
+                TakeResources(r);
+                if (res != null)
+                    res.amount = res.maxAmount;
+            }
+
+
+            return true;
+        }
+
+        private bool HasResource(ResourceRatio resInfo)
+        {
+            var resourceName = resInfo.ResourceName;
+            var needed = resInfo.Ratio;
+            var whpList = LogisticsTools.GetRegionalWarehouses(vessel, "USI_ModuleResourceWarehouse");
+            //EC we're a lot less picky...
+            if (resInfo.ResourceName == "ElectricCharge")
+            {
+                whpList.AddRange(part.vessel.parts);
+            }
+
+            var count = whpList.Count;
+            for(int i = 0; i < count; ++i)
+            {
+                var whp = whpList[i];
+                if (whp == part)
+                    continue;
+
+                var wh = whp.FindModuleImplementing<USI_ModuleResourceWarehouse>();
+
+                if (resInfo.ResourceName != "ElectricCharge" && wh != null)
+                {
+                    if(!wh.localTransferEnabled)
+                        continue;
+                }
+                if (whp.Resources.Contains(resourceName))
+                {
+                    var res = whp.Resources[resourceName];
+                    if (res.amount >= needed)
+                    {
+                        needed = 0;
+                        break;
+                    }
+                    else
+                    {
+                        needed -= res.amount;
+                    }
+                }
+            }
+            return (needed < ResourceUtilities.FLOAT_TOLERANCE);
+        }
+
+        private void TakeResources(ResourceRatio resInfo)
+        {
+            var resourceName = resInfo.ResourceName;
+            var needed = resInfo.Ratio;
+            //Pull in from warehouses
+
+            var whpList = LogisticsTools.GetRegionalWarehouses(vessel, "USI_ModuleResourceWarehouse");
+            var count = whpList.Count;
+            for (int i = 0; i < count; ++i)
+            {
+                var whp = whpList[i];
+                if (whp == part)
+                    continue;
+                var wh = whp.FindModuleImplementing<USI_ModuleResourceWarehouse>();
+                if (wh != null)
+                {
+                    if (!wh.localTransferEnabled)
+                        continue;
+                }
+                if (whp.Resources.Contains(resourceName))
+                {
+                    var res = whp.Resources[resourceName];
+                    if (res.amount >= needed)
+                    {
+                        res.amount -= needed;
+                        needed = 0;
+                        break;
+                    }
+                    else
+                    {
+                        needed -= res.amount;
+                        res.amount = 0;
+                    }
+                }
+            }
+        }
+
+
+        [KSPEvent(guiName = "Retract", guiActive = true, externalToEVAOnly = true, guiActiveEditor = false,
+            active = true, guiActiveUnfocused = true, unfocusedRange = 3.0f)]
         public void RetractModule()
         {
             if (isDeployed)
             {
-                if(CheckRetractConditions())
+                if (CheckRetractConditions())
                 {
                     isDeployed = false;
                     ReverseDeployAnimation();
                     ToggleEvent("DeployModule", true);
                     ToggleEvent("RetractModule", false);
+                    DisableModules();
+                    SetControlSurface(false);
+                    var res = part.Resources[ReplacementResource];
+                    if (res != null)
+                        res.amount = 0;
                 }
             }
         }
@@ -161,7 +331,8 @@ namespace USITools
             {
                 if (part.protoModuleCrew.Count > 0)
                 {
-                    var msg = string.Format("Unable to deflate {0} as it still contains crew members.", part.partInfo.title);
+                    var msg = string.Format("Unable to deflate {0} as it still contains crew members.",
+                        part.partInfo.title);
                     ScreenMessages.PostScreenMessage(msg, 5f, ScreenMessageStyle.UPPER_CENTER);
                     canRetract = false;
                 }
@@ -171,9 +342,10 @@ namespace USITools
                     if (inflatedMultiplier > 0)
                         CompressResourceCapacity();
                     var modList = GetAffectedMods();
-                    foreach (var m in modList)
+                    var count = modList.Count;
+                    for(int i = 0; i < count; ++i)
                     {
-                        m.DisableModule();
+                        modList[i].DisableModule();
                     }
                     MonoUtilities.RefreshContextWindows(part);
                 }
@@ -184,13 +356,13 @@ namespace USITools
         public List<ModuleResourceConverter> GetAffectedMods()
         {
             var modList = new List<ModuleResourceConverter>();
-            var modNames = new List<string> 
-                {"ModuleResourceConverter", "ModuleLifeSupportRecycler"};
+            var modNames = new List<string>
+            {"ModuleResourceConverter", "ModuleLifeSupportRecycler"};
 
-            for(int i = 0; i < part.Modules.Count; i++)
+            for (int i = 0; i < part.Modules.Count; i++)
             {
-                if(modNames.Contains(part.Modules[i].moduleName))
-                    modList.Add((ModuleResourceConverter)part.Modules[i]);
+                if (modNames.Contains(part.Modules[i].moduleName))
+                    modList.Add((ModuleResourceConverter) part.Modules[i]);
             }
             return modList;
         }
@@ -199,6 +371,7 @@ namespace USITools
         {
             DeployAnimation[deployAnimationName].speed = speed;
             DeployAnimation.Play(deployAnimationName);
+            SetDragState(1f);
         }
 
         public void ReverseDeployAnimation(int speed = -1)
@@ -210,73 +383,170 @@ namespace USITools
             DeployAnimation[deployAnimationName].time = DeployAnimation[deployAnimationName].length;
             DeployAnimation[deployAnimationName].speed = speed;
             DeployAnimation.Play(deployAnimationName);
+            SetDragState(0f);
         }
 
         private void ToggleEvent(string eventName, bool state)
         {
-            Events[eventName].active = state;
-            Events[eventName].externalToEVAOnly = state;
-            Events[eventName].guiActive = state;
-            Events[eventName].guiActiveEditor = state;
+            if (ResourceCosts != string.Empty)
+            {
+                Events[eventName].active = state;
+                Events[eventName].guiActiveUnfocused = state;
+                Events[eventName].externalToEVAOnly = true;
+                Events[eventName].guiActive = false;
+                Events[eventName].guiActiveEditor = state;
+            }
+            else
+            {
+                Events[eventName].active = state;
+                Events[eventName].externalToEVAOnly = false;
+                Events[eventName].guiActiveUnfocused = false;
+                Events[eventName].guiActive = state;
+                Events[eventName].guiActiveEditor = state;
+            }
             if (inflatedMultiplier > 0)
             {
                 Events[eventName].guiActiveEditor = false;
             }
-
         }
 
-        public override void OnStart(StartState state)
+
+        public void Initialize()
         {
             try
             {
+                _hasBeenInitialized = true;
+                FindModules();
+                SetupResourceCosts();
+                SetupDeployMenus();
                 DeployAnimation[deployAnimationName].layer = PrimaryLayer;
                 if (secondaryAnimationName != "")
                 {
                     SecondaryAnimation[secondaryAnimationName].layer = SecondaryLayer;
                 }
                 CheckAnimationState();
+                UpdatemenuNames();
             }
             catch (Exception ex)
             {
-                print("ERROR IN USIAnimationOnStart - " + ex.Message);
+                print("ERROR IN USI Animation Initialize - " + ex.Message);
             }
         }
 
-        public override void OnLoad(ConfigNode node)
+        private void UpdatemenuNames()
         {
-            try
+            if (startEventGUIName != "")
             {
-                CheckAnimationState();
+                Events["DeployModule"].guiName = startEventGUIName;
+                Actions["DeployAction"].guiName = startEventGUIName;
             }
-            catch (Exception ex)
+            if (endEventGUIName != "")
             {
-                print("ERROR IN USIAnimationOnLoad - " + ex.Message);
+                Events["RetractModule"].guiName = endEventGUIName;
+                Actions["RetractAction"].guiName = endEventGUIName;
+            }
+            if (actionGUIName != "")
+                Actions["ToggleAction"].guiName = actionGUIName;
+        }
+
+        private void SetupDeployMenus()
+        {
+            if (ResourceCosts != String.Empty)
+            {
+                Events["DeployModule"].guiActiveUnfocused = true;
+                Events["DeployModule"].externalToEVAOnly = true;
+                Events["DeployModule"].unfocusedRange = 10f;
+                Events["DeployModule"].guiActive = false;
+                Events["RetractModule"].guiActive = false;
+                Events["RetractModule"].guiActiveUnfocused = true;
+                Events["RetractModule"].externalToEVAOnly = true;
+                Events["RetractModule"].unfocusedRange = 10f;
+
+                Actions["DeployAction"].active = false;
+                Actions["RetractAction"].active = false;
+                Actions["ToggleAction"].active = false;
             }
         }
+
+
+        private void DisableModules()
+        {
+            if (vessel == null || _Modules == null) return;
+            for (int i = 0, iC = _Modules.Count; i < iC; ++i)
+            {
+                _Modules[i].DisableModule();
+            }
+        }
+
+        private void EnableModules()
+        {
+            if (vessel == null || _Modules == null) return;
+
+            if (_SwapBays != null && _SwapBays.Count > 0)
+            {
+                for (int i = 0, iC = _SwapBays.Count; i < iC; ++i)
+                {
+                    var bay = _SwapBays[i];
+                    bay.SetupMenus();
+                }
+            }
+            else
+            {
+                for (int i = 0, iC = _Modules.Count; i < iC; ++i)
+                {
+                    var mod = _Modules[i];
+                    if (mod.IsSituationValid())
+                        mod.EnableModule();
+                }
+            }
+        }
+
+        private void SetControlSurface(bool state)
+        {
+            var mcs = part.FindModuleImplementing<ModuleControlSurface>();
+            if (mcs == null)
+                return;
+
+            mcs.ignorePitch = !state;
+            mcs.ignoreRoll = !state;
+            mcs.ignoreYaw = !state;
+            mcs.isEnabled = state;
+        }
+
 
         private void CheckAnimationState()
         {
+            if (part.protoModuleCrew.Count > 0 && inflatable)
+            {
+                //We got them in here somehow....
+                isDeployed = true;
+            }
             if (isDeployed)
             {
                 ToggleEvent("DeployModule", false);
                 ToggleEvent("RetractModule", true);
                 PlayDeployAnimation(1000);
                 CheckDeployConditions();
+                EnableModules();
             }
-            else
+            else if(inflatable)
             {
                 ToggleEvent("DeployModule", true);
-                ToggleEvent("RetractModule", false); 
+                ToggleEvent("RetractModule", false);
                 ReverseDeployAnimation(-1000);
+                DisableModules();
             }
+            SetControlSurface(isDeployed);
         }
 
         private void ExpandResourceCapacity()
         {
             try
             {
-                foreach (var res in part.Resources.list)
+                var rCount = part.Resources.Count;
+                for (int i = 0; i < rCount; ++i)
                 {
+                    var res = part.Resources[i];
                     if (res.maxAmount < inflatedMultiplier)
                     {
                         double oldMaxAmount = res.maxAmount;
@@ -295,8 +565,10 @@ namespace USITools
         {
             try
             {
-                foreach (var res in part.Resources.list)
+                var rCount = part.Resources.Count;
+                for (int i = 0; i < rCount; ++i)
                 {
+                    var res = part.Resources[i];
                     if (res.maxAmount > inflatedMultiplier)
                     {
                         res.maxAmount /= inflatedMultiplier;
@@ -315,6 +587,9 @@ namespace USITools
 
         public void FixedUpdate()
         {
+            if(!_hasBeenInitialized)
+                Initialize();
+
             if (!HighLogic.LoadedSceneIsFlight)
                 return;
 
@@ -334,48 +609,90 @@ namespace USITools
                 }
             }
         }
-    }
 
-    public class ModuleAnimationExtended : ModuleAnimateGeneric
-    {
-        [KSPField]
-        public float clampIncrement = 2.5f;
+        public List<ResourceRatio> ResCosts;
 
-        [KSPField]
-        public string menuName = "Clamp";
-
-        [KSPField(isPersistant = true)]
-        public bool initialClamp = false;
-
-
-        [KSPAction("Increase Clamp")]
-        public void IncreaseAction(KSPActionParam param)
+        private void SetupResourceCosts()
         {
-            deployPercent += clampIncrement;
-            if (deployPercent > 100)
-                deployPercent = 100;
-        }
+            ResCosts = new List<ResourceRatio>();
+            if (String.IsNullOrEmpty(ResourceCosts))
+                return;
 
-
-        [KSPAction("Decrease Clamp")]
-        public void DecreaseAction(KSPActionParam param)
-        {
-            deployPercent -= clampIncrement;
-            if (deployPercent < 0)
-                deployPercent = 0;
-        }
-
-        public override void OnStart(StartState state)
-        {
-            Actions["IncreaseAction"].guiName = "Increase " + menuName;
-            Actions["DecreaseAction"].guiName = "Decrease " + menuName;
-            if (initialClamp)
+            var resources = ResourceCosts.Split(',');
+            for (int i = 0; i < resources.Length; i += 2)
             {
-                initialClamp = false;
-                deployPercent = 50;
-                animTime = .5f;
+                ResCosts.Add(new ResourceRatio
+                {
+                    ResourceName = resources[i],
+                    Ratio = double.Parse(resources[i + 1])
+                });
             }
-            base.OnStart(state);
+        }
+
+        private void SetDragState(float b)
+        {
+            part.DragCubes.SetCubeWeight("A", b);
+            part.DragCubes.SetCubeWeight("B", 1f - b);
+
+            if (part.DragCubes.Procedural)
+                part.DragCubes.ForceUpdate(true, true);
+        }
+
+        public override string GetInfo()
+        {
+            if (String.IsNullOrEmpty(ResourceCosts))
+                return "";
+
+            var output = new StringBuilder("Resource Cost:\n\n");
+            var resources = ResourceCosts.Split(',');
+            for (int i = 0; i < resources.Length; i += 2)
+            {
+                output.Append(string.Format("{0} {1}\n", double.Parse(resources[i + 1]), resources[i]));
+            }
+            return output.ToString();
+        }
+
+        public string[] GetDragCubeNames()
+        {
+            return new string[] { "A", "B" };
+        }
+
+        public bool UsesProceduralDragCubes()
+        {
+            return false;
+        }
+
+        public bool IsMultipleCubesActive { get { return true; } }
+
+        public void AssumeDragCubePosition(string name)
+        {
+            var anim = part.FindModelAnimators(deployAnimationName)[0];
+            if (anim == null)
+            {
+                enabled = false;
+                return;
+            }
+
+            if (anim[deployAnimationName] == null)
+            {
+                enabled = false;
+                return;
+            }
+
+
+            anim[deployAnimationName].speed = 0f;
+            anim[deployAnimationName].enabled = true;
+            anim[deployAnimationName].weight = 1f;
+
+            switch (name)
+            {
+                case "A":
+                    anim[deployAnimationName].normalizedTime = 1f;
+                    break;
+                case "B":
+                    anim[deployAnimationName].normalizedTime = 0f;
+                    break;
+            }
         }
     }
 }

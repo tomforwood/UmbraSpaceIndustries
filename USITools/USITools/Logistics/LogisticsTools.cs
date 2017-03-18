@@ -1,11 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using UnityEngine;
 using USITools.Logistics;
 
-namespace KolonyTools
+namespace USITools
 {
     
     public class LogisticsTools
@@ -23,14 +21,20 @@ namespace KolonyTools
             try
             {
                 var vessels = new List<Vessel>();
-                foreach (var v in FlightGlobals.Vessels.Where(
-                    x => x.mainBody == thisVessel.mainBody
-                    && (x.Landed || !landedOnly || x == thisVessel)))
+                var count = FlightGlobals.Vessels.Count;
+                for (int i = 0; i < count; ++i)
                 {
-                    if (v == thisVessel && !includeSelf) continue;
-                    if (GetRange(thisVessel,v) < range)
+                    var v = FlightGlobals.Vessels[i];
+                    if (v.mainBody == thisVessel.mainBody
+                        && (v.Landed || !landedOnly || v == thisVessel))
                     {
-                        vessels.Add(v);
+                        if (v == thisVessel && !includeSelf)
+                            continue;
+
+                        if (GetRange(thisVessel, v) < range)
+                        {
+                            vessels.Add(v);
+                        }
                     }
                 }
                 return vessels;
@@ -42,36 +46,54 @@ namespace KolonyTools
             }
         }
 
-        public static IEnumerable<Part> GetRegionalWarehouses(Vessel vessel, string module)
+        public static List<Part> GetRegionalWarehouses(Vessel vessel, string module)
         {
             var pList = new List<Part>();
             var vList = GetNearbyVessels((float)LogisticsSetup.Instance.Config.MaintenanceRange, true, vessel, false);
-            foreach (var v in vList)
+            var count = vList.Count;
+            for(int i = 0; i < count; ++i)
             {
-                foreach (var vp in v.parts.Where(p => p.Modules.Contains(module)))
+                var v = vList[i];
+                var parts = v.parts;
+                var pCount = parts.Count;
+                for (int x = 0; x < pCount; ++x)
                 {
-                    pList.Add(vp);
+                    Part p = parts[x];
+                    if(p.Modules.Contains(module) || vessel == v)
+                        pList.Add(p);
                 }
             }
             return pList;
         }
 
-        public static bool HasCrew(Part p, string skill)
+        public static bool HasCrew(Vessel v, string skill)
         {
-            if (p.CrewCapacity > 0)
+            var crew = v.GetVesselCrew();
+            var count = crew.Count;
+            for (int i = 0; i < count; ++i)
             {
-                return (p.protoModuleCrew.Any(c => c.experienceTrait.TypeName == skill));
+                if (crew[i].experienceTrait.TypeName == skill)
+                    return true;
             }
-            else
-            {
-                return (p.vessel.GetVesselCrew().Any(c => c.experienceTrait.TypeName == skill));
-            }
+            return false;
         }
 
-        public static bool NearbyCrew(Vessel v, float range, String skill)
+        public static bool NearbyCrew(Vessel v, float range, String effect)
         {
             List<Vessel> nearby = GetNearbyVessels(range, true, v, true);
-            return nearby.Any(near=>near.GetVesselCrew().Any(c=>c.experienceTrait.TypeName==skill));
+            var count = nearby.Count;
+            for (int i = 0; i < count; ++i)
+            {
+                var vsl = nearby[i];
+                var crew = vsl.GetVesselCrew();
+                var cCount = crew.Count;
+                for (int x = 0; x < cCount; ++x)
+                {
+                    if(crew[x].HasEffect(effect))
+                        return true;
+                }
+            }
+            return false;
         }
     }
 }

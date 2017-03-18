@@ -1,9 +1,4 @@
 ﻿using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using KSPAchievements;
 using UnityEngine;
 using Random = System.Random;
 
@@ -25,16 +20,19 @@ namespace USITools
         public int cartridgeYield = 1000000;
 
         [KSPField] 
-        public int maxPulseTime = 3;
+        public double maxPulseTime = 1.0;
 
         [KSPField] 
-        public double minPulseTime = 0.5;
+        public double minPulseTime = 1.0;
 
         [KSPField] 
         public double particleLife = 0.12d;
 
         [KSPField]
         public double powerFactor = 2d;
+
+        [KSPField]
+        public double FuelRate = 0.25d;
 
         [KSPField]
         public double densityMultiplier = 250d;
@@ -51,6 +49,9 @@ namespace USITools
         [KSPField]
         public float animationSpeed;
 
+        [KSPField]
+        public bool atmosphereNerf = false;
+
         [KSPField(guiActive = true)] 
         public string Fuel = "none";
 
@@ -64,7 +65,7 @@ namespace USITools
         {
             CurrentFuelIndex -= 1;
             if (CurrentFuelIndex < 0)
-                CurrentFuelIndex = Fuels.Count() -1;
+                CurrentFuelIndex = Fuels.Length -1;
             Fuel = Fuels[CurrentFuelIndex].name;
         }
 
@@ -72,7 +73,7 @@ namespace USITools
         public void NextFuel()
         {
             CurrentFuelIndex += 1;
-            if (CurrentFuelIndex >= Fuels.Count())
+            if (CurrentFuelIndex >= Fuels.Length)
                 CurrentFuelIndex = 0;
             Fuel = Fuels[CurrentFuelIndex].name;
         }
@@ -89,9 +90,11 @@ namespace USITools
         {
             eList = part.GetComponentsInChildren<KSPParticleEmitter>();
             broker = new ResourceBroker();
+            if (fuelList == null)
+                return;
             var fl = fuelList.Split(';');
-            Fuels = new PartResourceDefinition[fl.Count()];
-            for(int i = 0; i < fl.Count(); i++)
+            Fuels = new PartResourceDefinition[fl.Length];
+            for(int i = 0; i < fl.Length; i++)
             {
                 var res = PartResourceLibrary.Instance.GetDefinition(fl[i]);
                 if (res != null)
@@ -181,7 +184,11 @@ namespace USITools
             if(Planetarium.GetUniversalTime() - lastCheck < minPulseTime)
             {
                 var curveTime = (float) (Planetarium.GetUniversalTime() - lastCheck)/(float) minPulseTime;
-                var thrustAmount = (float) (currentThrust*pulseCurve.Evaluate(curveTime));
+                var atmoModifier = 1f;
+                if(atmosphereNerf)
+                    atmoModifier = (float)Math.Max(0, 1d - vessel.atmDensity);
+                var thrustAmount = (float) (currentThrust*pulseCurve.Evaluate(curveTime)) * atmoModifier;
+
                 part.GetComponent<Rigidbody>().AddForceAtPosition(-t.forward * thrustAmount, t.position, ForceMode.Force);
                 part.AddThermalFlux(thrustAmount * heatMultiplier);
             }
@@ -196,13 +203,13 @@ namespace USITools
         private void ConsumeFuel()
         {
             var res = Fuels[CurrentFuelIndex];
-            broker.RequestResource(part, res.name, 1, 1, "");
+            broker.RequestResource(part, res.name, FuelRate, 1, res.resourceFlowMode);
         }
 
         private bool HasFuel()
         {
             var res = Fuels[CurrentFuelIndex];
-            return broker.AmountAvailable(part, res.name, 1, "") > 1;
+            return broker.AmountAvailable(part, res.name, 1, res.resourceFlowMode) > 1;
         }
 
         private float GetPulseThrust()
@@ -215,8 +222,10 @@ namespace USITools
 
         private void ToggleEmmitters(bool state)
         {
-            foreach (KSPParticleEmitter e in eList)
+            var count = eList.Length;
+            for (int i = 0; i < count; ++i)
             {
+                var e = eList[i];
                 e.emit = state;
                 e.enabled = state;
             }

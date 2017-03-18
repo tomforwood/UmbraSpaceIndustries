@@ -1,9 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
-namespace KolonyTools
+namespace USITools
 {
     public class USI_ModuleFieldRepair : PartModule
     {
@@ -25,9 +22,9 @@ namespace KolonyTools
         public void PerformMaintenance()
         {
             var kerbal = FlightGlobals.ActiveVessel.rootPart.protoModuleCrew[0];
-            if (kerbal.experienceTrait.Title != "Engineer")
+            if (!kerbal.HasEffect("RepairSkill"))
             {
-                ScreenMessages.PostScreenMessage("Only Engineers can perform EVA Maintenance!", 5f,
+                ScreenMessages.PostScreenMessage("Only Kerbals with repair skills (engineers, mechanics) can perform EVA Maintenance!", 5f,
                     ScreenMessageStyle.UPPER_CENTER);
                 return;
             }
@@ -41,13 +38,18 @@ namespace KolonyTools
             var PullList = PullResourceList.Split(',');
             var PushList = PushResourceList.Split(',');
 
-            foreach (var r in PullList)
+            var count = PullList.Length;
+            for(int i = 0; i < count; ++i)
             {
+                var r = PullList[i];
                 if (!String.IsNullOrEmpty(r))
                     GrabResources(r);
             }
-            foreach (var r in PushList)
+
+            count = PushList.Length;
+            for (int i = 0; i < count; ++i)
             {
+                var r = PushList[i];
                 if (!String.IsNullOrEmpty(r))
                     PushResources(r);
             }
@@ -66,10 +68,17 @@ namespace KolonyTools
 
         private void PushResources(string resourceName)
         {
+            if (!part.Resources.Contains(resourceName))
+            {
+                return;
+            }
             var brokRes = part.Resources[resourceName];
             //Put remaining parts in warehouses
-            foreach (var p in LogisticsTools.GetRegionalWarehouses(vessel, "USI_ModuleCleaningBin"))
+            var wh = LogisticsTools.GetRegionalWarehouses(vessel, "USI_ModuleCleaningBin");
+            var count = wh.Count;
+            for (int i = 0; i < count; ++i)
             {
+                var p = wh[i];
                 if (p.Resources.Contains(resourceName))
                 {
                     var partRes = p.Resources[resourceName];
@@ -90,23 +99,24 @@ namespace KolonyTools
 
         private void SwapResources(string fetchName, string storeName)
         {
-            print("Making sure part contains " + storeName);
             if (!part.Resources.Contains(storeName))
                 return;
 
-            print("Resource exists...");
             var brokRes = part.Resources[storeName];
             var needed = brokRes.maxAmount - brokRes.amount;
-            print("We need " + needed);
             //Pull in from warehouses
-
             var whpList = LogisticsTools.GetRegionalWarehouses(vessel, "USI_ModuleResourceWarehouse");
-            print("Found " + whpList.Count() + " warehouses...");
-            foreach (var whp in whpList)
+            var count = whpList.Count;
+            for(int i = 0; i < count; ++i)
             {
+                var whp = whpList[i];
                 var wh = whp.FindModuleImplementing<USI_ModuleResourceWarehouse>();
-                if(!wh.transferEnabled)
-                    continue;
+                if (wh != null)
+                {
+                    if (!wh.localTransferEnabled)
+                        continue;
+                }
+
                 if (whp.Resources.Contains(fetchName))
                 {
                     print("Found " + fetchName);
@@ -139,11 +149,25 @@ namespace KolonyTools
             //Pull in from warehouses
 
             var whpList = LogisticsTools.GetRegionalWarehouses(vessel, "USI_ModuleResourceWarehouse");
-            foreach (var whp in whpList.Where(w=>w != part))
+            var count = whpList.Count;
+
+            for (int i = 0; i < count; ++i)
             {
-                var wh = whp.FindModuleImplementing<USI_ModuleResourceWarehouse>();
-                if (!wh.transferEnabled)
-                    continue; 
+                var whp = whpList[i];
+                if (whp == part)
+                    continue;
+
+                var whc = whp.FindModulesImplementing<BaseConverter>();
+                if(whc.Count > 0)
+                    continue;
+
+                
+                if (whp.Modules.Contains("USI_ModuleResourceWarehouse"))
+                {
+                    var wh = whp.FindModuleImplementing<USI_ModuleResourceWarehouse>();
+                    if (!wh.localTransferEnabled)
+                        continue;
+                }
                 if (whp.Resources.Contains(resourceName))
                 {
                     var res = whp.Resources[resourceName];

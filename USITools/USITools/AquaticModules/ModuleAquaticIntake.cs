@@ -1,6 +1,4 @@
-﻿using System.Linq;
-
-namespace USITools
+﻿namespace USITools
 {
     public class ModuleAquaticIntake : PartModule
     {
@@ -17,7 +15,7 @@ namespace USITools
             vessel.checkSplashed();
             if (!vessel.Splashed)
                 return;
-            var res = part.Resources.list.FirstOrDefault(r => r.resourceName == ResourceName);
+            var res = part.Resources.Get(ResourceName);
             if (res != null)
             {
                 res.amount += (FlowRate*TimeWarp.fixedDeltaTime);

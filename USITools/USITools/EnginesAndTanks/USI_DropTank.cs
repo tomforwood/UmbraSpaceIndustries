@@ -1,7 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
 namespace USITools
 {
@@ -46,8 +43,11 @@ namespace USITools
             if (vessel != null)
             {
                 bool drop = true;
-                foreach (var res in part.Resources.list)
+                var rCount = part.Resources.Count;
+                for (int i = 0; i < rCount; ++i)
                 {
+                    var res = part.Resources[i];
+
                     if (res.amount >= threshold)
                     {
                         drop = false;
@@ -61,6 +61,7 @@ namespace USITools
                     }
                     if (explode)
                     {
+                        part.explosionPotential = 0f;
                         part.explode();
                     } 
 

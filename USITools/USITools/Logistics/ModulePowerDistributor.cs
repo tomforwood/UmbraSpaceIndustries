@@ -1,6 +1,6 @@
 using USITools.Logistics;
 
-namespace KolonyTools
+namespace USITools
 {
     [KSPModule("Power Distributor")]
     public class ModulePowerDistributor : PartModule
@@ -15,7 +15,7 @@ namespace KolonyTools
         {
             get
             {
-                return this.part != null && LogisticsTools.NearbyCrew(this.vessel, PowerDistributionRange, "Engineer");
+                return this.part != null && LogisticsTools.NearbyCrew(this.vessel, PowerDistributionRange, "ConverterSkill");
             }
         }
 

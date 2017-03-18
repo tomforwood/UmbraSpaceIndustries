@@ -1,11 +1,12 @@
 using System;
-using System.Linq;
+using System.Collections.Generic;
 
-namespace KolonyTools
+namespace USITools
 {
     public class USI_ModuleRecycleablePart : PartModule
     {
         //Another super hacky module.
+        private List<String> _blackList = new List<string> { "PotatoRoid", "UsiExplorationRock" };
 
         [KSPField]
         public float EVARange = 5f;
@@ -24,24 +25,25 @@ namespace KolonyTools
         public void ScrapPart()
         {
             var kerbal = FlightGlobals.ActiveVessel.rootPart.protoModuleCrew[0];
-            if (part.children.Any())
+            if (part.children.Count > 0)
             {
                 ScreenMessages.PostScreenMessage("You can only scrap parts without child parts", 5f,
                     ScreenMessageStyle.UPPER_CENTER);
                 return;
             }
-            if (kerbal.experienceTrait.Title != "Engineer")
-            {
-                ScreenMessages.PostScreenMessage("Only Engineers can disassemble parts!", 5f,
-                    ScreenMessageStyle.UPPER_CENTER);
-                return;
-            }
+
             var res = PartResourceLibrary.Instance.GetDefinition(ResourceName);
             double resAmount = part.mass / res.density * Efficiency;
 
-            ScreenMessages.PostScreenMessage(String.Format("You disassemble the {0} into {1:0.00} units of {2}", part.name, resAmount, ResourceName), 5f, ScreenMessageStyle.UPPER_CENTER);
-            PushResources(ResourceName, resAmount);
+            if (!_blackList.Contains(part.partName))
+            {
+                ScreenMessages.PostScreenMessage(
+                    String.Format("You disassemble the {0} into {1:0.00} units of {2}", part.name, resAmount,
+                        ResourceName), 5f, ScreenMessageStyle.UPPER_CENTER);
+                PushResources(ResourceName, resAmount);
+            }
             part.decouple();
+            part.explosionPotential = 0f;
             part.explode();
         }
 
@@ -55,11 +57,19 @@ namespace KolonyTools
         private void PushResources(string resourceName, double amount)
         {
             var vessels = LogisticsTools.GetNearbyVessels(2000, true, vessel, false);
-            foreach (var v in vessels)
+            var count = vessels.Count;
+            for(int i = 0; i < count; ++i)
             {
+                var v = vessels[i];
                 //Put recycled stuff into recycleable places
-                foreach (var p in v.parts.Where(vp => vp != part && vp.Modules.Contains("USI_ModuleRecycleBin")))
+                var mods = v.FindPartModulesImplementing<USI_ModuleRecycleBin>();
+                var pCount = mods.Count;
+                for (int x = 0; x < pCount; ++x)
                 {
+                    var p = mods[x].part;
+                    if (p == part)
+                        continue;
+
                     if (p.Resources.Contains(resourceName))
                     {
                         var partRes = p.Resources[resourceName];
