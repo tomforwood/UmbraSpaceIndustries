@@ -101,7 +101,7 @@ namespace USITools
     public abstract class BaseFilter : MonoBehaviour
     {
         private readonly List<AvailablePart> parts = new List<AvailablePart>();
-        internal string category = "Filter by Function";
+        internal string category = "Filter by function";
         internal bool filter = true;
         protected abstract string Manufacturer { get; set; }
         protected abstract string categoryTitle { get; set; }
@@ -134,7 +134,7 @@ namespace USITools
         {
             var icon = GenIcon(categoryTitle);
             var filter = PartCategorizer.Instance.filters.Find(f => f.button.categoryName == category);
-            PartCategorizer.AddCustomSubcategoryFilter(filter, categoryTitle, icon, EditorItemsFilter);
+            PartCategorizer.AddCustomSubcategoryFilter(filter, categoryTitle, categoryTitle, icon, EditorItemsFilter);
         }
 
         private Icon GenIcon(string iconName)
